@@ -50,18 +50,21 @@ function buildDefaultData() {
         obj[day] = {
             batters: BATTER_POSITIONS.map(p => ({ pos: p.pos, name: '', ...Object.fromEntries(BATTER_INPUT_FIELDS.map(f => [f, ''])) })),
             pitchers: PITCHER_POSITIONS.map(p => ({ pos: p, name: '', ...Object.fromEntries(PITCHER_INPUT_FIELDS.map(f => [f, ''])) })),
+            // 스크린샷에서 나온 누적 원시값 (OCR diff 계산용)
+            rawBatters: null,
+            rawPitchers: null,
         };
     });
     return obj;
 }
 
 function saveData() {
-    // 월요일이 아닌 경우, 입력된 누적값에서 전날까지의 누적합을 빼서 당일 기록만 저장
+    // 월요일이 아닌 경우, 누적값을 전날과 비교하여 차이만 저장
     const dayIdx = DAYS.indexOf(currentDay);
     if (dayIdx > 0 && currentDay !== 'cumulative') {
         const prevDay = DAYS[dayIdx - 1];
 
-        // 타자 차분 계산: 입력값(누적) - 전날까지의 누적합
+        // 타자 차분 계산: 입력한 누적값 - 전날까지의 누적합 = 오늘 기록
         data[currentDay].batters.forEach((row, i) => {
             BATTER_INPUT_FIELDS.forEach(field => {
                 const currentVal = parseNum(row[field]);
@@ -71,7 +74,7 @@ function saveData() {
             });
         });
 
-        // 투수 차분 계산: 입력값(누적) - 전날까지의 누적합
+        // 투수 차분 계산: 입력한 누적값 - 전날까지의 누적합 = 오늘 기록
         data[currentDay].pitchers.forEach((row, i) => {
             PITCHER_INPUT_FIELDS.forEach(field => {
                 if (field === '이닝') {
@@ -262,12 +265,6 @@ function renderBatters() {
     rows.forEach((row, rowIdx) => {
         const tr = document.createElement('tr');
 
-        // 포지션
-        const tdPos = document.createElement('td');
-        tdPos.className = 'col-pos';
-        tdPos.textContent = row.pos;
-        tr.appendChild(tdPos);
-
         // 선수명 (항상 편집 가능)
         const tdName = document.createElement('td');
         tdName.className = 'col-name';
@@ -364,12 +361,6 @@ function renderPitchers() {
 
     rows.forEach((row, rowIdx) => {
         const tr = document.createElement('tr');
-
-        // 포지션
-        const tdPos = document.createElement('td');
-        tdPos.className = 'col-pos';
-        tdPos.textContent = row.pos;
-        tr.appendChild(tdPos);
 
         // 선수명
         const tdName = document.createElement('td');
@@ -520,6 +511,9 @@ function init() {
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             currentDay = btn.dataset.day;
+            // Show/hide OCR bar (only on weekday tabs)
+            const ocrBar = document.getElementById('ocrBar');
+            ocrBar.style.display = (currentDay !== 'cumulative') ? 'flex' : 'none';
             render();
         });
     });
@@ -566,12 +560,48 @@ function init() {
         }
     });
 
-
+    // ── OCR file input wiring ──
+    document.getElementById('ocrFileBatter').addEventListener('change', e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        e.target.value = ''; // reset so same file can be uploaded again
+        window.runOCRPipeline(file, 'batter', currentDay);
+    });
+    document.getElementById('ocrFilePitcher').addEventListener('change', e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        e.target.value = '';
+        window.runOCRPipeline(file, 'pitcher', currentDay);
+    });
 
     // Initial render
     render();
 }
 
+// =========== GLOBAL EXPORTS (for ocr.js) ===========
+window.DAY_LABELS = DAY_LABELS;
+window.BATTER_POSITIONS = BATTER_POSITIONS;
+window.PITCHER_POSITIONS = PITCHER_POSITIONS;
+window.DAYS = DAYS;
+window.BATTER_INPUT_FIELDS = BATTER_INPUT_FIELDS;
+window.PITCHER_INPUT_FIELDS = PITCHER_INPUT_FIELDS;
+window.__appData = () => data;
+window.saveData = saveData;
+window.render = render;
+window.showToast = showToast;
 
+// 이전 요일의 raw 누적값 조회 (OCR diff 계산용)
+window.getPrevDayRaw = (day, type) => {
+    const idx = DAYS.indexOf(day);
+    if (idx <= 0) return null; // 월요일은 이전 요일 없음
+    const prevDay = DAYS[idx - 1];
+    return type === 'batter' ? data[prevDay].rawBatters : data[prevDay].rawPitchers;
+};
+
+// raw 누적값 저장
+window.setDayRaw = (day, type, rawArray) => {
+    if (type === 'batter') data[day].rawBatters = rawArray;
+    else data[day].rawPitchers = rawArray;
+};
 
 document.addEventListener('DOMContentLoaded', init);
