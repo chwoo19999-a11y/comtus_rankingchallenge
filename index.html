@@ -53,25 +53,6 @@
       <!-- Current Day Label -->
       <div class="current-label" id="currentLabel">📊 누적기록</div>
 
-      <!-- OCR Upload Bar (only shown on weekday tabs) -->
-      <div class="ocr-bar" id="ocrBar" style="display:none;">
-        <span class="ocr-bar-label">📸 스크린샷 자동 입력</span>
-        <label class="btn-ocr" id="btnOcrBatter">
-          🏏 타자 스크린샷
-          <input type="file" id="ocrFileBatter" accept="image/*" style="display:none;" />
-        </label>
-        <label class="btn-ocr" id="btnOcrPitcher">
-          ⚾ 투수 스크린샷
-          <input type="file" id="ocrFilePitcher" accept="image/*" style="display:none;" />
-        </label>
-        <!-- Progress -->
-        <div id="ocrProgressWrap" style="display:none; flex:1; min-width:120px;">
-          <div class="ocr-progress-track">
-            <div class="ocr-progress-bar" id="ocrProgressBar" style="width:0%"></div>
-          </div>
-          <div class="ocr-status-text" id="ocrStatusText">인식 중...</div>
-        </div>
-      </div>
 
       <!-- Batter Section -->
       <section id="batterSection" class="record-section">
@@ -148,30 +129,8 @@
     </div>
   </div>
 
-  <!-- OCR Confirm Modal -->
-  <div class="modal-overlay ocr-modal-overlay" id="ocrConfirmModal">
-    <div class="modal ocr-modal">
-      <h3 id="ocrConfirmTitle">📸 인식 결과</h3>
-      <p class="ocr-modal-hint" id="ocrModalHint">인식된 값을 확인·수정 후 적용하세요. 비어있는 칸은 덮어쓰지 않습니다.</p>
-      <div class="ocr-table-wrap">
-        <table class="ocr-confirm-table">
-          <thead id="ocrConfirmHead"></thead>
-          <tbody id="ocrConfirmBody"></tbody>
-        </table>
-      </div>
-      <details class="ocr-raw-details">
-        <summary>📄 OCR 원문 보기</summary>
-        <pre id="ocrRawText" class="ocr-raw-text"></pre>
-      </details>
-      <div class="modal-actions">
-        <button class="btn-cancel" id="ocrCancelBtn">취소</button>
-        <button class="btn-confirm" id="ocrApplyBtn">✅ 적용하기</button>
-      </div>
-    </div>
-  </div>
 
   <script src="app.js"></script>
-  <script src="ocr.js"></script>
 </body>
 
 </html>
