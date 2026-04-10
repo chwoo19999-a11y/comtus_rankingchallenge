@@ -313,7 +313,7 @@ function renderBatters() {
                 input.type = 'text';
                 input.className = 'stat-input';
                 input.placeholder = hasPrevDay ? '누적값' : '0';
-                input.title = hasPrevDay ? '오늘까지의 누적값을 입력하세요 (저장 시 전날과의 차이로 자동 계산됩니다)' : '기록을 입력하세요';
+                input.title = hasPrevDay ? '시즌 누적값을 입력하세요 (저장 시 월~전날 합산을 차감하여 오늘 기록만 저장됩니다)' : '기록을 입력하세요';
 
                 // 화~일: 전날 누적 + 오늘 차이를 표시 (입력값은 누적값처럼 보이게)
                 let displayValue = row[field];
@@ -325,11 +325,20 @@ function renderBatters() {
 
                 input.value = displayValue;
                 input.addEventListener('input', e => {
-                    // 사용자가 입력한 누적값을 임시로 저장
                     data[currentDay].batters[rowIdx][field] = e.target.value;
                     markDirty();
-                    // 파생 지표 실시간 업데이트 (누적값 기준)
-                    const tempRow = { ...data[currentDay].batters[rowIdx] };
+                    // 파생 지표 실시간 업데이트: 모든 필드를 누적값 기준으로 계산
+                    const tempRow = { name: data[currentDay].batters[rowIdx].name };
+                    BATTER_INPUT_FIELDS.forEach(f => {
+                        if (!hasPrevDay) {
+                            tempRow[f] = data[currentDay].batters[rowIdx][f];
+                        } else {
+                            const cum = getCumulativeUpToDay(DAYS[dayIdx - 1], 'batter', rowIdx, f);
+                            tempRow[f] = f === field
+                                ? e.target.value
+                                : String(cum + parseNum(data[currentDay].batters[rowIdx][f]));
+                        }
+                    });
                     updateDerivedCells(tr, tempRow);
                 });
                 td.appendChild(input);
@@ -401,7 +410,7 @@ function renderPitchers() {
                 input.className = 'stat-input';
                 input.placeholder = hasPrevDay ? '누적값' : (field === '이닝' ? '0' : '0');
                 input.title = hasPrevDay
-                    ? '오늘까지의 누적값을 입력하세요 (저장 시 전날과의 차이로 자동 계산됩니다)'
+                    ? '시즌 누적값을 입력하세요 (저장 시 월~전날 합산을 차감하여 오늘 기록만 저장됩니다)'
                     : (field === '이닝' ? '예: 7, 69 1/3, 147 2/3' : '');
 
                 // 화~일: 전날 누적 + 오늘 차이를 표시
@@ -421,9 +430,21 @@ function renderPitchers() {
                 input.addEventListener('input', e => {
                     data[currentDay].pitchers[rowIdx][field] = e.target.value;
                     markDirty();
-                    // ERA 실시간 업데이트 (누적값 기준)
-                    const tempRow = { ...data[currentDay].pitchers[rowIdx] };
-                    tempRow[field] = e.target.value;
+                    // ERA 실시간 업데이트: 모든 필드를 누적값 기준으로 계산
+                    const tempRow = { name: data[currentDay].pitchers[rowIdx].name };
+                    PITCHER_INPUT_FIELDS.forEach(f => {
+                        if (!hasPrevDay) {
+                            tempRow[f] = data[currentDay].pitchers[rowIdx][f];
+                        } else if (f === field) {
+                            tempRow[f] = e.target.value;
+                        } else if (f === '이닝') {
+                            const cum = getCumulativeUpToDay(DAYS[dayIdx - 1], 'pitcher', rowIdx, f);
+                            tempRow[f] = formatInning(cum + parseInning(data[currentDay].pitchers[rowIdx][f]));
+                        } else {
+                            const cum = getCumulativeUpToDay(DAYS[dayIdx - 1], 'pitcher', rowIdx, f);
+                            tempRow[f] = String(cum + parseNum(data[currentDay].pitchers[rowIdx][f]));
+                        }
+                    });
                     const eraCell = tr.querySelector('.era-cell');
                     if (eraCell) eraCell.textContent = calcERA(tempRow);
                 });
@@ -444,8 +465,7 @@ function updateCurrentLabel() {
     if (currentDay === 'cumulative') {
         label.textContent = '📊 누적기록 (전체 요일 합산)';
     } else if (hasPrevDay) {
-        const prevDay = DAYS[dayIdx - 1];
-        label.textContent = `📅 ${DAY_LABELS[currentDay]} (누적값 입력 → 전날과 차이로 자동 계산)`;
+        label.textContent = `📅 ${DAY_LABELS[currentDay]} (시즌 누적값 입력 → 월~전날 합산 차감 후 오늘 기록 저장)`;
     } else {
         label.textContent = `📅 ${DAY_LABELS[currentDay]} (첫 요일)`;
     }

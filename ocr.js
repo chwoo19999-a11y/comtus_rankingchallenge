@@ -26,6 +26,16 @@ const BATTER_POS_CODES = ['DH', 'SS', '1B', '2B', '3B', 'LF', 'CF', 'RF', 'C'];
 // 투수 포지션: SP1에서 CP까지
 const PITCHER_POS_PATTERNS = ['SP1', 'SP2', 'SP3', 'SP4', 'SP5', 'RP1', 'RP2', 'RP3', 'RP4', 'CP'];
 
+// KBO 팀명 필터 (팀명이 포함된 줄은 선수 행으로 인식하지 않음)
+const KBO_TEAM_KEYWORDS = [
+    'SSG', '랜더스', 'KT', '위즈', 'LG', '트윈스', 'NC', '다이노스',
+    '두산', '베어스', '키움', '히어로즈', '롯데', '자이언츠', '삼성',
+    '라이온즈', '한화', '이글스', 'KIA', '기아', '타이거즈', '랜더',
+];
+function isTeamLine(line) {
+    return KBO_TEAM_KEYWORDS.some(t => line.includes(t));
+}
+
 // ── Tesseract 동적 로드 ──
 let _tesseractLoaded = false;
 function loadTesseract() {
@@ -46,15 +56,18 @@ function loadTesseract() {
     });
 }
 
-// ── 이미지 → Canvas 변환 + 대비 강화 ──
+// ── 이미지 → Canvas 변환 + 전처리 ──
+// 게임 UI는 어두운 배경 + 흰 글자 구조이므로:
+// 1. 2배 확대 (작은 글자 인식률 향상)
+// 2. 그레이스케일 변환
+// 3. 반전 + 이진화 (흰 글자 → 검정, 어두운 배경 → 흰색)
 function preprocessImageToCanvas(file) {
     return new Promise((resolve, reject) => {
         const img = new Image();
         const url = URL.createObjectURL(file);
         img.onload = () => {
+            const scale = 2; // 2배 확대로 인식률 향상
             const canvas = document.createElement('canvas');
-            const maxW = 2400;
-            const scale = img.width > maxW ? maxW / img.width : 1;
             canvas.width = img.width * scale;
             canvas.height = img.height * scale;
             const ctx = canvas.getContext('2d');
@@ -62,15 +75,15 @@ function preprocessImageToCanvas(file) {
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-            // 대비 강화
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             const d = imageData.data;
-            const contrast = 60;
-            const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+            const threshold = 140; // 이 값 이상이면 텍스트(밝음) → 검정으로
             for (let i = 0; i < d.length; i += 4) {
-                d[i] = clamp(factor * (d[i] - 128) + 128);
-                d[i + 1] = clamp(factor * (d[i + 1] - 128) + 128);
-                d[i + 2] = clamp(factor * (d[i + 2] - 128) + 128);
+                // 그레이스케일 변환
+                const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+                // 반전 이진화: 밝은 픽셀(글자) → 0(검정), 어두운 픽셀(배경) → 255(흰색)
+                const val = gray >= threshold ? 0 : 255;
+                d[i] = d[i + 1] = d[i + 2] = val;
             }
             ctx.putImageData(imageData, 0, 0);
             URL.revokeObjectURL(url);
@@ -92,6 +105,8 @@ async function runOCR(canvas, onProgress) {
             }
         }
     });
+    // PSM 6: 균일한 텍스트 블록으로 인식 (표 형태 스크린샷에 적합)
+    await worker.setParameters({ tessedit_pageseg_mode: '6' });
     const { data: { text } } = await worker.recognize(canvas);
     await worker.terminate();
     return text;
@@ -106,19 +121,26 @@ function parseOCRBatterText(text) {
         // 숫자가 없는 줄은 스킵 (팀명 등 제외)
         if (!/\d/.test(line)) continue;
 
-        // 한글 선수명 찾기 (2~4글자, 선택적으로 영문자·연도 포함)
-        const nameMatch = line.match(/([가-힣]{2,4}(?:[A-Z]?['']?\d{2})?[A-Z]?)/);
+        // KBO 팀명이 포함된 줄 스킵
+        if (isTeamLine(line)) continue;
+
+        // 한글 선수명만 추출 (숫자·특수기호 제외)
+        const nameMatch = line.match(/([가-힣]{2,4})/);
         if (!nameMatch) continue;
 
         const name = nameMatch[1].trim();
+
+        // 이미 같은 이름이 있으면 중복 스킵
+        if (results.some(r => r.name === name)) continue;
 
         // 순서대로 포지션 배정 (1번째 선수 → 포수, 2번째 → 1루수, ...)
         const posIdx = results.length;
         if (posIdx >= window.BATTER_POSITIONS.length) break;
         const korPos = window.BATTER_POSITIONS[posIdx].pos;
 
-        // 숫자 추출
-        const nums = extractNumbers(line);
+        // 이름 이후 텍스트에서만 숫자 추출 (순위번호·연도 오탐 방지)
+        const afterName = line.slice(nameMatch.index + nameMatch[0].length);
+        const nums = extractNumbers(afterName);
         const inputNums = skipDerivedStats(nums);
 
         results.push({
@@ -148,20 +170,28 @@ function parseOCRPitcherText(text) {
         // 숫자가 없는 줄은 스킵 (팀명 등 제외)
         if (!/\d/.test(line)) continue;
 
-        // 한글 선수명 찾기 (2~4글자, 선택적으로 영문자·연도 포함)
-        const nameMatch = line.match(/([가-힣]{2,4}(?:[A-Z]?['']?\d{2})?[A-Z]?)/);
+        // KBO 팀명이 포함된 줄 스킵
+        if (isTeamLine(line)) continue;
+
+        // 한글 선수명만 추출 (숫자·특수기호 제외)
+        const nameMatch = line.match(/([가-힣]{2,4})/);
         if (!nameMatch) continue;
 
         const name = nameMatch[1].trim();
+
+        // 이미 같은 이름이 있으면 중복 스킵
+        if (results.some(r => r.name === name)) continue;
 
         // 순서대로 포지션 배정
         const posIdx = results.length;
         if (posIdx >= window.PITCHER_POSITIONS.length) break;
         const pos = window.PITCHER_POSITIONS[posIdx];
 
-        const nums = extractNumbers(line);
+        // 이름 이후 텍스트에서만 숫자 추출 (순위번호·연도 오탐 방지)
+        const afterName = line.slice(nameMatch.index + nameMatch[0].length);
+        const nums = extractNumbers(afterName);
         const inputNums = nums.length > 0 ? nums.slice(1) : nums; // ERA 스킵
-        const inningRaw = extractInning(line);
+        const inningRaw = extractInning(afterName);
         results.push({
             pos,
             name,
@@ -222,11 +252,10 @@ function computeDiff(todayParsed, prevRaw, type) {
         ? ['경기', '타수', '안타', '2루타', '3루타', '홈런', '볼넷', '사구', '희생플라이', '득점권타수', '득점권안타']
         : ['경기', '승', '패', '이닝', '자책점'];
 
-    const posList = type === 'batter' ? BATTER_POS_PATTERNS : PITCHER_POS_PATTERNS;
-
     return todayParsed.map(todayRow => {
-        const prevRow = prevRaw
-            ? prevRaw.find(r => r.pos === todayRow.pos)
+        // 이름 기준으로 전날 데이터 매칭 (순위 변동 대응)
+        const prevRow = prevRaw && todayRow.name
+            ? prevRaw.find(r => r.name === todayRow.name)
             : null;
 
         const diffRow = { pos: todayRow.pos, name: todayRow.name };
@@ -356,7 +385,8 @@ function showOCRConfirmDialog(pairs, type, day, prevRaw, rawText) {
         tr.appendChild(tdName);
 
         // 필드들
-        const prevRow = prevRaw ? prevRaw.find(r => r.pos === diffRow.pos) : null;
+        // 이름 기준으로 전날 데이터 매칭
+        const prevRow = prevRaw && diffRow.name ? prevRaw.find(r => r.name === diffRow.name) : null;
 
         fields.forEach(f => {
             if (hasDiff) {
@@ -426,15 +456,15 @@ function showOCRConfirmDialog(pairs, type, day, prevRaw, rawText) {
 function applyOCRResult(diffRows, type, day, todayRawRows) {
     const data = window.__appData();
     const targetArray = type === 'batter' ? data[day].batters : data[day].pitchers;
-    const posList = type === 'batter'
-        ? window.BATTER_POSITIONS.map(p => p.pos)
-        : window.PITCHER_POSITIONS;
     const fields = type === 'batter'
         ? window.BATTER_INPUT_FIELDS
         : window.PITCHER_INPUT_FIELDS;
 
-    diffRows.forEach((row, ri) => {
-        const idx = posList.indexOf(row.pos);
+    diffRows.forEach((row) => {
+        // 1순위: 이름이 일치하는 슬롯 (순위 변동 대응)
+        let idx = row.name ? targetArray.findIndex(t => t.name === row.name) : -1;
+        // 2순위: 이름 없는 빈 슬롯
+        if (idx === -1) idx = targetArray.findIndex(t => !t.name || t.name === '');
         if (idx === -1) return;
         const target = targetArray[idx];
         if (row.name) target.name = row.name;
